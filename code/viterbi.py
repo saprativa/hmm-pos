@@ -4,7 +4,7 @@ from tqdm import tqdm
 import pickle as pkl
 from itertools import chain
 from sklearn.model_selection import KFold
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 nltk.download('punkt')
 nltk.download('universal_tagset')
@@ -20,10 +20,8 @@ def calculate_initial_probs(tagged_sentences, tag2id):
     for sent in tagged_sentences:
         first_tags.append(sent[0][1])
     
-    fd = nltk.FreqDist(first_tags)
-    
     for tag, tagid in tag2id.items():
-        initial[tagid] = fd.freq(tag)
+        initial[tagid] = np.log((first_tags.count(tag)+1)/(len(first_tags)+len(tag2id)))
         
     return initial
 
@@ -38,7 +36,7 @@ def calculate_emission_probs(tag2id, word2id, train_tagged_words):
         for word, wordid in word2id.items():
             word_tag_list = [pair[0] for pair in tag_list if pair[0]==word]
             word_tag_count = len(word_tag_list)
-            emission[tagid][wordid] = word_tag_count/tag_count
+            emission[tagid][wordid] = np.log((word_tag_count+1)/(tag_count+len(word2id)))
     return emission
 
 
@@ -59,7 +57,7 @@ def calculate_transition_probs(tag2id, train_set):
         for tag2, tagid2 in tag2id.items():
             tag1_tag2_list = [pair for pair in tag1_list if pair[1]==tag2]
             tag1_tag2_count = len(tag1_tag2_list)
-            transition[tagid1][tagid2] = tag1_tag2_count/tag1_count
+            transition[tagid1][tagid2] = np.log((tag1_tag2_count+1)/(tag1_count+len(tag2id)))
     
     return transition
 
@@ -79,7 +77,7 @@ def viterbi(test_set, tag2id, word2id, initial, emission, transition):
         
         for s in range(len(tag2id)):
             if(sent[0] in word2id):
-                viterbi[s][0] = initial[s] * emission[s][word2id[sent[0]]]
+                viterbi[s][0] = initial[s] + emission[s][word2id[sent[0]]]
             else:
                 viterbi[s][0] = 0 
             backpointer[s][0] = -1
@@ -89,7 +87,7 @@ def viterbi(test_set, tag2id, word2id, initial, emission, transition):
                 temp = np.zeros((len(tag2id),))
                 for s_ in range(len(tag2id)):
                     if(sent[t] in word2id):
-                        temp[s_] = viterbi[s_][t-1] * transition[s_][s] * emission[s][word2id[sent[t]]]
+                        temp[s_] = viterbi[s_][t-1] + transition[s_][s] + emission[s][word2id[sent[t]]]
                     else:
                         temp[s_] = 0
                   
@@ -175,9 +173,31 @@ if __name__ == "__main__":
     
     save_object(true_pos_all, "true_pos_all.pkl")
     save_object(predicted_pos_all, "predicted_pos_all.pkl")
+    
+    print("Overall Performance:")
+    for avg in ['micro', 'macro', 'weighted']:
+      p=np.zeros(5)
+      r=np.zeros(5)
+      f1=np.zeros(5)
+      for i in range(5):
+        p[i], r[i], f1[i], _ = precision_recall_fscore_support(true_pos_all[i], predicted_pos_all[i], average=avg)
+      with np.printoptions(precision=2):
+        print(avg, ":", "P:", np.mean(p), "R:", np.mean(r), "F1:", np.mean(f1))
 
 
-
+    print("Per POS Performance:")
+    p=np.zeros((5,12))
+    r=np.zeros((5,12))
+    f1=np.zeros((5,12))
+    
+    for i in range(5):
+      p[i], r[i], f1[i], _ = precision_recall_fscore_support(true_pos_all[i], predicted_pos_all[i], average=None)
+    
+    with np.printoptions(precision=2):
+      print("Tags:", list(tags.keys()))
+      print("Per POS P:", np.mean(p, axis=0))
+      print("Per POS R:", np.mean(r, axis=0))
+      print("Per POS F1:", np.mean(f1, axis=0))
 
 
     
